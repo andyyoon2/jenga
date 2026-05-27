@@ -1,4 +1,4 @@
-use std::{env, fmt, io, process::Command, string};
+use std::{env, error::Error, fmt, io, process::Command, string};
 
 use octocrab::Octocrab;
 
@@ -6,6 +6,7 @@ use crate::{PullRequest, remote::Remote};
 
 pub struct GitHub {}
 
+#[derive(Debug)]
 pub enum GitHubError {
     InvalidToken,
     Octocrab(octocrab::Error),
@@ -43,6 +44,8 @@ impl fmt::Display for GitHubError {
     }
 }
 
+impl Error for GitHubError {}
+
 impl From<octocrab::Error> for GitHubError {
     fn from(value: octocrab::Error) -> Self {
         Self::Octocrab(value)
@@ -69,7 +72,7 @@ impl From<string::FromUtf8Error> for GHError {
 
 impl GitHub {
     pub async fn list_pull_requests(
-        remote: Remote,
+        remote: &Remote,
     ) -> Result<Option<Vec<PullRequest>>, GitHubError> {
         let token = GitHub::get_access_token()?;
         let octocrab = Octocrab::builder().personal_token(token).build()?;
@@ -79,6 +82,26 @@ impl GitHub {
                 None::<&()>,
             )
             .await?)
+    }
+
+    pub async fn retrieve_pull_request(
+        remote: &Remote,
+        head: &String,
+    ) -> Result<Option<PullRequest>, GitHubError> {
+        let token = GitHub::get_access_token()?;
+        let octocrab = Octocrab::builder().personal_token(token).build()?;
+        let results: Vec<PullRequest> = octocrab
+            .get(
+                format!(
+                    "/repos/{}/{}/pulls?head={}:{}",
+                    remote.owner, remote.repository, remote.owner, head
+                ),
+                None::<&()>,
+            )
+            .await?;
+
+        // Take ownership and return the first value
+        Ok(results.into_iter().next())
     }
 
     fn get_access_token() -> Result<String, GitHubError> {

@@ -1,11 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["cli", "github"]
+members = ["cli", "github", "jj"]
 
 [workspace.dependencies]
 anyhow = "1.0"
 clap = { version = "4.6.1", features = ["derive"] }
+futures = "0.3"
 http = "1.4.0"
+jj-lib = { version = "0.41.0", features = ["git"] }
 octocrab = "0.51.0"
 regex = "1.12.3"
 serde = { version = "1.0", features = ["derive"] }

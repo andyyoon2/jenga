@@ -10,5 +10,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
-tokio = { workspace = true }
+futures = { workspace = true }
 github = { path = "../github" }
+jj = { path = "../jj" }
+tokio = { workspace = true }

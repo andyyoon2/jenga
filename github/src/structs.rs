@@ -4,21 +4,21 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
 pub struct User {
-    pub id: u32,
+    pub id: u64,
     pub login: String,
     pub avatar_url: String,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Team {
-    pub id: u32,
+    pub id: u64,
     pub slug: String,
     pub name: String,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Label {
-    pub id: u32,
+    pub id: u64,
     pub name: String,
     pub color: String,
 }
@@ -33,8 +33,8 @@ pub struct Ref {
 
 #[derive(Deserialize, Debug)]
 pub struct PullRequest {
-    pub id: u32,
-    pub number: u32,
+    pub id: u64,
+    pub number: u64,
     pub state: String,
     pub title: String,
     pub user: User,
