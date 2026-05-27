@@ -5,7 +5,10 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
-use github::{github::GitHub, remote::Remote};
+use github::{
+    github::{GitHub, GitHubError},
+    remote::Remote,
+};
 
 /// Submit your jj stack to GitHub.
 #[derive(Parser, Debug)]
@@ -57,9 +60,17 @@ async fn main() -> io::Result<()> {
                         println!("{}\t{}\t{}", item.number, item.title, item.head.ref_field);
                     }
                 }
-                Err(e) => {
-                    eprintln!("Something went wrong: {}", e);
-                }
+                Err(e) => match e {
+                    GitHubError::InvalidToken => {
+                        eprintln!(
+                            "Something went wrong: {}",
+                            "Invalid github token. Set GITHUB_TOKEN or log in with the gh CLI."
+                        );
+                    }
+                    _ => {
+                        eprintln!("Something went wrong: {}", e);
+                    }
+                },
             }
         }
     }
