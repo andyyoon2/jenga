@@ -1,9 +1,6 @@
-use std::{
-    io::{self, ErrorKind, Write},
-    process::Command,
-    str::FromStr,
-};
+use std::{process::Command, str::FromStr};
 
+use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
 use github::{
     github::{GitHub, GitHubError},
@@ -28,42 +25,36 @@ enum Commands {
 
 // TODO: Likely better to instantiate rt when needed
 #[tokio::main]
-async fn main() -> io::Result<()> {
+async fn main() -> Result<()> {
     let args = Args::parse();
 
     match &args.command {
         Commands::Status {} => {
-            println!("Welcome to jenga!\n");
-
-            // Log test
-            let output = Command::new("jj").args(["log", "-n10"]).output()?;
-            io::stdout().write_all(&output.stdout)?;
-            io::stderr().write_all(&output.stderr)?;
-
             // Get remote
             let output = Command::new("jj")
                 .args(["git", "remote", "list"])
-                .output()?;
+                .output()
+                .context("Failed to list jj remotes")?;
             let remote_raw = String::from_utf8(output.stdout).expect("Not valid UTF-8");
-            println!("remote_raw: {}", remote_raw);
 
             let mut remote_split = remote_raw.split(" ");
             let (Some(_), Some(url)) = (remote_split.next(), remote_split.next()) else {
-                // TODO: Anyhow
-                return Err(io::Error::new(ErrorKind::Other, "Invalid remote format"));
+                return Err(anyhow!("Invalid remote format"));
             };
 
             match GitHub::list_pull_requests(Remote::from_str(url).expect("URL Parse error")).await
             {
-                Ok(page) => {
-                    for item in page.items {
-                        println!("{}\t{}\t{}", item.number, item.title, item.head.ref_field);
+                Ok(Some(items)) => {
+                    for item in items {
+                        println!("{}\t{}\t{}", item.number, item.title, item.head.ref_name);
                     }
+                }
+                Ok(None) => {
+                    eprintln!("No pull requests found");
                 }
                 Err(e) => match e {
                     GitHubError::InvalidToken => {
                         eprintln!(
-                            "Something went wrong: {}",
                             "Invalid github token. Set GITHUB_TOKEN or log in with the gh CLI."
                         );
                     }

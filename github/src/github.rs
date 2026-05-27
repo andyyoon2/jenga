@@ -1,8 +1,8 @@
 use std::{env, fmt, io, process::Command, string};
 
-use octocrab::{Octocrab, Page, models::pulls::SimplePullRequest};
+use octocrab::Octocrab;
 
-use crate::remote::Remote;
+use crate::{PullRequest, remote::Remote};
 
 pub struct GitHub {}
 
@@ -15,10 +15,29 @@ impl fmt::Display for GitHubError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidToken => {
-                write!(f, "{}", "Invalid access token")
+                write!(f, "Invalid access token")
             }
             Self::Octocrab(e) => {
-                write!(f, "{}", e)
+                // TODO: Better backtrace handling
+                match e {
+                    octocrab::Error::GitHub {
+                        source,
+                        backtrace: _,
+                    } => {
+                        write!(
+                            f,
+                            "Octocrab {}\n{} {} {:#?}",
+                            e, source.status_code, source.message, source.errors
+                        )
+                    }
+                    octocrab::Error::Serde {
+                        source: _,
+                        backtrace,
+                    } => {
+                        write!(f, "Octocrab {}\n{}", e, backtrace)
+                    }
+                    _ => write!(f, "Octocrab {}", e),
+                }
             }
         }
     }
@@ -51,13 +70,14 @@ impl From<string::FromUtf8Error> for GHError {
 impl GitHub {
     pub async fn list_pull_requests(
         remote: Remote,
-    ) -> Result<Page<SimplePullRequest>, GitHubError> {
+    ) -> Result<Option<Vec<PullRequest>>, GitHubError> {
         let token = GitHub::get_access_token()?;
         let octocrab = Octocrab::builder().personal_token(token).build()?;
         Ok(octocrab
-            .pulls(remote.owner, remote.repository)
-            .list()
-            .send()
+            .get(
+                format!("/repos/{}/{}/pulls", remote.owner, remote.repository),
+                None::<&()>,
+            )
             .await?)
     }
 
