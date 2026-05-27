@@ -2,13 +2,14 @@ use regex::Regex;
 use std::{str::FromStr, sync::LazyLock};
 
 static REMOTE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"https://([A-Za-z0-9-_]+).com/([A-Za-z0-9-_\d]+)/([A-Za-z0-9-_\d]+).git").unwrap()
+    Regex::new(r"https://([A-Za-z0-9-_]+).com/([A-Za-z0-9-_\d]+)/([A-Za-z0-9-_\d]+)(?:.git)?")
+        .unwrap()
 });
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Remote {
-    owner: String,
-    repository: String,
+    pub owner: String,
+    pub repository: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
