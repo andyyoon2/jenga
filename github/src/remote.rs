@@ -1,5 +1,5 @@
 use regex::Regex;
-use std::{str::FromStr, sync::LazyLock};
+use std::{error::Error, fmt, sync::LazyLock};
 
 static REMOTE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"https://([A-Za-z0-9-_]+).com/([A-Za-z0-9-_\d]+)/([A-Za-z0-9-_\d]+)(?:.git)?")
@@ -8,6 +8,7 @@ static REMOTE_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Remote {
+    pub name: String,
     pub owner: String,
     pub repository: String,
 }
@@ -18,10 +19,8 @@ pub enum RemoteParseError {
     NotImplemented,
 }
 
-impl FromStr for Remote {
-    type Err = RemoteParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+impl Remote {
+    pub fn from_url_str(s: &str, name: &str) -> Result<Self, RemoteParseError> {
         let caps = REMOTE_RE
             .captures(s)
             .ok_or(RemoteParseError::InvalidFormat)?;
@@ -29,11 +28,23 @@ impl FromStr for Remote {
             return Err(RemoteParseError::NotImplemented);
         }
         Ok(Self {
+            name: name.to_owned(),
             owner: caps[2].to_owned(),
             repository: caps[3].to_owned(),
         })
     }
 }
+
+impl fmt::Display for RemoteParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidFormat => write!(f, "Invalid remote format"),
+            Self::NotImplemented => write!(f, "Sorry, this remote is not supported"),
+        }
+    }
+}
+
+impl Error for RemoteParseError {}
 
 #[cfg(test)]
 mod tests {
@@ -41,20 +52,20 @@ mod tests {
 
     #[test]
     fn parses_valid_string_format() {
-        let remote = Remote::from_str("https://github.com/foo/bar.git").unwrap();
+        let remote = Remote::from_url_str("https://github.com/foo/bar.git", "origin").unwrap();
         assert_eq!(remote.owner, "foo");
         assert_eq!(remote.repository, "bar");
     }
 
     #[test]
     fn errors_on_invalid_string_format() {
-        let result = Remote::from_str("https://some-url.com");
+        let result = Remote::from_url_str("https://some-url.com", "origin");
         assert_eq!(result, Err(RemoteParseError::InvalidFormat));
     }
 
     #[test]
     fn does_not_support_gitlab() {
-        let result = Remote::from_str("https://gitlab.com/foo/bar.git");
+        let result = Remote::from_url_str("https://gitlab.com/foo/bar.git", "origin");
         assert_eq!(result, Err(RemoteParseError::NotImplemented));
     }
 }

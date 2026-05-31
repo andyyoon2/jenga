@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["cli", "github", "jj"]
+members = ["cli", "github", "jj", "stacks"]
 
 [workspace.dependencies]
 anyhow = "1.0"

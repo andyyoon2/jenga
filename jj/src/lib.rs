@@ -1,85 +1,75 @@
-use anyhow::{Context, Result};
-use std::{
-    collections::HashMap,
-    env,
-    error::Error,
-    fmt,
-    io::{self, BufRead, BufReader},
-    process::Command,
-    sync::Arc,
-};
+use anyhow::{Context, Result, anyhow};
+use futures::{StreamExt, TryStreamExt, stream::LocalBoxStream};
+use std::{collections::HashMap, env, sync::Arc};
 
 use jj_lib::{
     backend::CommitId,
-    config::{ConfigGetError, StackedConfig},
+    config::StackedConfig,
+    graph::{GraphEdge, TopoGroupedGraph},
+    id_prefix::IdPrefixContext,
     op_store::RemoteRef,
-    repo::{ReadonlyRepo, RepoLoaderError, StoreFactories},
+    ref_name::RemoteName,
+    refs::{RefPushAction, classify_ref_push_action},
+    repo::{ReadonlyRepo, StoreFactories},
+    revset::{Revset, RevsetExtensions, SymbolResolver, UserRevsetExpression},
     settings::UserSettings,
-    workspace::{Workspace, WorkspaceLoadError, default_working_copy_factories},
+    str_util::{StringExpression, StringMatcher, StringPattern},
+    workspace::{Workspace, default_working_copy_factories},
 };
 
-pub fn list_commits() -> io::Result<Vec<String>> {
-    let output = Command::new("jj")
-        .args([
-            "log",
-            "-r",
-            "(::@ ~ ::trunk())", // NOTE: both @ and trunk() are not in jj-lib
-            "--no-graph",
-            "--reversed",
-            "-T",
-            "commit_id ++ \"\n\"",
-        ])
-        .output()?;
-    let reader = BufReader::new(&output.stdout[..]);
-    reader.lines().collect()
+/// Owns workspace and relevant state
+pub struct WorkspaceHelper {
+    workspace: Workspace,
+    repo: Arc<ReadonlyRepo>,
+    bookmarks: HashMap<CommitId, (String, String, RemoteRef)>,
 }
 
-#[derive(Debug)]
-pub enum JJError {
-    ConfigGet(ConfigGetError),
-    Io(io::Error),
-    WorkspaceLoad(WorkspaceLoadError),
-    RepoLoader(RepoLoaderError),
-}
+impl WorkspaceHelper {
+    /// Loads relevant repo info from the jj workspace on disk.
+    pub async fn load_new() -> Result<Self> {
+        let workspace = load_workspace()?;
+        let repo = load_repo(&workspace).await?;
+        let bookmarks = build_bookmarks_map(&repo);
 
-impl fmt::Display for JJError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ConfigGet(e) => write!(f, "ConfigGetError: {e}"),
-            Self::Io(e) => write!(f, "io Error: {e}"),
-            Self::WorkspaceLoad(e) => write!(f, "WorkspaceLoadError: {e}"),
-            Self::RepoLoader(e) => write!(f, "RepoLoaderError: {e}"),
-        }
+        Ok(Self {
+            workspace,
+            repo,
+            bookmarks,
+        })
+    }
+
+    /// Check which bookmarks need to be pushed
+    /// See [jj]/cli/src/commands/git/push.rs::find_bookmarks_to_push L1121
+    pub fn bookmark_push_actions<'a>(
+        &'a self,
+        // TODO: This is weird to require caller to pass it when we already own it in the struct. Lifetimes issue.
+        matcher: &'a StringMatcher,
+    ) -> Vec<(String, RefPushAction)> {
+        self.repo
+            .view()
+            .local_remote_bookmarks_matching(
+                matcher,
+                RemoteName::new("origin"), // TODO: seems wrong!
+            )
+            .map(|(name, targets)| {
+                (
+                    name.as_symbol().to_string(),
+                    classify_ref_push_action(targets),
+                )
+            })
+            .collect()
+    }
+
+    /// Build a dependency graph of bookmarks
+    pub async fn resolve_bookmarks_graph(&self) -> Result<BookmarkGraph> {
+        let revset = get_valid_bookmarks_revset(&self.workspace, &self.repo)
+            .context("Failed to get revset")?;
+        // Deref the Box (Box<dyn Revset>), then get a ref to it (&dyn Revset)
+        build_bookmark_graph_from_revset(&*revset, &self.bookmarks).await
     }
 }
 
-impl Error for JJError {}
-
-impl From<ConfigGetError> for JJError {
-    fn from(value: ConfigGetError) -> Self {
-        Self::ConfigGet(value)
-    }
-}
-
-impl From<io::Error> for JJError {
-    fn from(value: io::Error) -> Self {
-        Self::Io(value)
-    }
-}
-
-impl From<WorkspaceLoadError> for JJError {
-    fn from(value: WorkspaceLoadError) -> Self {
-        Self::WorkspaceLoad(value)
-    }
-}
-
-impl From<RepoLoaderError> for JJError {
-    fn from(value: RepoLoaderError) -> Self {
-        Self::RepoLoader(value)
-    }
-}
-
-pub async fn load_repo() -> Result<Arc<ReadonlyRepo>> {
+fn load_workspace() -> Result<Workspace> {
     let config = StackedConfig::with_defaults();
     let user_settings =
         UserSettings::from_config(config).context("Failed to load user settings")?;
@@ -87,51 +77,190 @@ pub async fn load_repo() -> Result<Arc<ReadonlyRepo>> {
     let store_factories = StoreFactories::default();
     let wc_factories = default_working_copy_factories();
 
-    let workspace = Workspace::load(&user_settings, &cwd, &store_factories, &wc_factories)
-        .context("Failed to load workspace")?;
-    let repo = workspace
+    Workspace::load(&user_settings, &cwd, &store_factories, &wc_factories)
+        .context("Failed to load workspace")
+}
+
+async fn load_repo(workspace: &Workspace) -> Result<Arc<ReadonlyRepo>> {
+    workspace
         .repo_loader()
         .load_at_head()
         .await
-        .context("Failed to load repo")?;
-    Ok(repo)
+        .context("Failed to load repo")
 }
 
-/// Walk list of commits and build a dep graph of bookmarks. Linear history supported only for now.
-/// commit_ids should be ordered by closest to trunk -> farthest.
-pub async fn walk_commits<'a>(
-    commit_ids: &'a Vec<String>,
-    bookmarks_map: &'a HashMap<CommitId, (String, RemoteRef)>,
-) -> Vec<(String, RemoteRef)> {
-    let mut bookmarks = vec![];
-    for id in commit_ids.iter() {
-        // TODO: Try also from_bytes, then we don't have to parse to string in list_commits
-        let Some(commit_id) = CommitId::try_from_hex(id) else {
-            eprintln!("Failed to parse commit id: {}", id);
-            continue;
-        };
-        if let Some(bookmark) = bookmarks_map.get(&commit_id) {
-            bookmarks.push(bookmark.clone());
+// See [jj]/cli/src/commands/git/push.rs
+fn get_valid_bookmarks_revset<'repo>(
+    workspace: &Workspace,
+    repo: &'repo ReadonlyRepo,
+) -> Result<Box<dyn Revset + 'repo>> {
+    // See [jj]/cli/src/revset_util.rs L108
+    let wc = UserRevsetExpression::working_copy(workspace.workspace_name().to_owned());
+    // TODO: Improve this
+    let trunk = UserRevsetExpression::bookmarks(
+        StringExpression::exact("main").union(StringExpression::exact("master")),
+    );
+    let bookmarks = UserRevsetExpression::bookmarks(StringExpression::all());
+    // TODO: Doing a lot of repeated stuff from jj cli, clean it up
+    let expr = wc
+        .ancestors()
+        .minus(&trunk.ancestors())
+        .intersection(&bookmarks);
+    let extensions = Arc::new(RevsetExtensions::default());
+    let id_prefix_context = IdPrefixContext::new(extensions.clone());
+    let symbol_resolver = SymbolResolver::new(repo, extensions.symbol_resolvers())
+        .with_id_prefix_context(&id_prefix_context);
+    let resolved_expr = expr
+        .resolve_user_expression(repo, &symbol_resolver)
+        .context("Failed to resolve revset expression")?;
+    resolved_expr
+        .evaluate(repo)
+        .context("Failed to evaluate revset")
+}
+
+#[derive(Debug)]
+pub struct BookmarkNode {
+    commit_id: CommitId,
+    pub name: String,
+    pub remote_name: String,
+    remote_ref: RemoteRef,
+    pub parent_name: Option<String>,
+}
+
+impl BookmarkNode {
+    pub fn new(
+        commit_id: CommitId,
+        name: String,
+        remote_name: String,
+        remote_ref: RemoteRef,
+        parent_name: Option<String>,
+    ) -> Self {
+        Self {
+            commit_id,
+            name,
+            remote_name,
+            remote_ref,
+            parent_name,
         }
     }
-    bookmarks
 }
 
-/// Build a mapping from CommitId -> (String (bookmark name), RemoteRef). Filters for "origin" remote only for now.
+/// Linear dependency graph of bookmarks
+#[derive(Debug)]
+pub struct BookmarkGraph(Vec<Arc<BookmarkNode>>);
+
+impl BookmarkGraph {
+    pub fn iter(&self) -> impl Iterator<Item = &Arc<BookmarkNode>> {
+        self.0.iter()
+    }
+
+    pub fn try_to_matcher(&self) -> Result<StringMatcher> {
+        let bookmark_names_expr = self
+            .iter()
+            .map(|node| node.name.clone())
+            .collect::<Vec<_>>()
+            .join("|");
+        Ok(StringPattern::regex(&bookmark_names_expr)?.to_matcher())
+    }
+}
+
+impl IntoIterator for BookmarkGraph {
+    type Item = Arc<BookmarkNode>;
+    type IntoIter = std::vec::IntoIter<Arc<BookmarkNode>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a BookmarkGraph {
+    type Item = &'a Arc<BookmarkNode>;
+    type IntoIter = std::slice::Iter<'a, Arc<BookmarkNode>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+// [jj]/cli/src/commands/log.rs
+/// Walk the revset graph and convert to a linear dependency graph of bookmarks.
+/// The revset should already be filtered to bookmarks by calling get_valid_bookmarks_revset.
+/// TODO: Make the structure/api better
+async fn build_bookmark_graph_from_revset(
+    revset: &dyn Revset,
+    bookmarks_map: &HashMap<CommitId, (String, String, RemoteRef)>,
+) -> Result<BookmarkGraph> {
+    // Don't understand this yet
+    let revset_graph = TopoGroupedGraph::new(revset.stream_graph(), |id| id);
+    let mut stream: LocalBoxStream<_> = revset_graph.stream().boxed_local();
+
+    // Reverse stream so we can build parent nodes before children and validate parent relationships
+    let mut entries: Vec<(CommitId, Vec<GraphEdge<CommitId>>)> = vec![];
+    while let Some(entry) = stream
+        .try_next()
+        .await
+        .context("Failed to iterate stream")?
+    {
+        entries.push(entry);
+    }
+    entries.reverse();
+
+    let mut seen_nodes: HashMap<CommitId, Arc<BookmarkNode>> = HashMap::new();
+    let mut ordered_bookmarks = vec![];
+
+    // Iterate from trunk -> leaves
+    for (commit_id, edges) in entries {
+        let (name, remote_name, remote_ref) = bookmarks_map
+            .get(&commit_id)
+            .ok_or(anyhow!("No bookmark found for commit {}", commit_id))?;
+
+        let parents: Vec<_> = edges
+            .iter()
+            .filter_map(|e| seen_nodes.get(&e.target).cloned())
+            .collect();
+        if parents.len() > 1 {
+            return Err(anyhow!(
+                "{} has multiple parent bookmarks ({:?}). Only linear history is supported. \
+                Reorder your stack so each bookmark has only one parent.",
+                name,
+                parents.iter().map(|n| &n.name[..]).collect::<Vec<_>>()
+            ));
+        }
+
+        let node = Arc::new(BookmarkNode::new(
+            commit_id.clone(),
+            name.clone(),
+            remote_name.clone(),
+            remote_ref.clone(),
+            parents.first().map(|n| n.name.clone()),
+        ));
+        seen_nodes.insert(commit_id.clone(), node.clone());
+        ordered_bookmarks.push(node);
+    }
+    Ok(BookmarkGraph(ordered_bookmarks))
+}
+
+/// Build a mapping from CommitId -> (bookmark name, remote name, RemoteRef). Filters for "origin" remote only for now.
 /// TODO: Support other remote names
-pub fn build_bookmarks_map(repo: &ReadonlyRepo) -> HashMap<CommitId, (String, RemoteRef)> {
+fn build_bookmarks_map(repo: &ReadonlyRepo) -> HashMap<CommitId, (String, String, RemoteRef)> {
     let mut map = HashMap::new();
     let view = repo.view();
     for (name, target) in view.bookmarks() {
         if let Some(commit_id) = target.local_target.as_normal()
-            && let Some((_remote_name, remote_ref)) = target
+            && let Some((remote_name, remote_ref)) = target
                 .remote_refs
                 .into_iter()
-                .find(|(name, _)| name.as_str() == "origin")
+                // TODO: If the remote doesn't exist, we need to push the bookmark
+                // .find(|(name, _)| name.as_str() == "origin")
+                .find(|_| true)
         {
             map.insert(
                 commit_id.clone(),
-                (name.as_symbol().to_string(), remote_ref.clone()),
+                (
+                    name.as_symbol().to_string(),
+                    remote_name.as_symbol().to_string(),
+                    remote_ref.clone(),
+                ),
             );
         }
     }
