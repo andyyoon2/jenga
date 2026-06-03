@@ -7,7 +7,6 @@ use jj_lib::{
     config::StackedConfig,
     graph::{GraphEdge, TopoGroupedGraph},
     id_prefix::IdPrefixContext,
-    op_store::RemoteRef,
     ref_name::RemoteName,
     refs::{RefPushAction, classify_ref_push_action},
     repo::{ReadonlyRepo, StoreFactories},
@@ -21,7 +20,7 @@ use jj_lib::{
 pub struct WorkspaceHelper {
     workspace: Workspace,
     repo: Arc<ReadonlyRepo>,
-    bookmarks: HashMap<CommitId, (String, String, RemoteRef)>,
+    bookmarks: HashMap<CommitId, String>,
 }
 
 impl WorkspaceHelper {
@@ -38,19 +37,17 @@ impl WorkspaceHelper {
         })
     }
 
-    /// Check which bookmarks need to be pushed
+    /// Check push actions for each bookmark
     /// See [jj]/cli/src/commands/git/push.rs::find_bookmarks_to_push L1121
-    pub fn bookmark_push_actions<'a>(
+    pub fn get_bookmark_push_actions<'a>(
         &'a self,
         // TODO: This is weird to require caller to pass it when we already own it in the struct. Lifetimes issue.
         matcher: &'a StringMatcher,
+        remote_name: &'a str,
     ) -> Vec<(String, RefPushAction)> {
         self.repo
             .view()
-            .local_remote_bookmarks_matching(
-                matcher,
-                RemoteName::new("origin"), // TODO: seems wrong!
-            )
+            .local_remote_bookmarks_matching(matcher, RemoteName::new(remote_name))
             .map(|(name, targets)| {
                 (
                     name.as_symbol().to_string(),
@@ -60,7 +57,27 @@ impl WorkspaceHelper {
             .collect()
     }
 
-    /// Build a dependency graph of bookmarks
+    /// Get bookmarks which exist on the given remote
+    pub fn get_bookmarks_on_remote<'a>(
+        &'a self,
+        // TODO: This is weird to require caller to pass it when we already own it in the struct. Lifetimes issue.
+        matcher: &'a StringMatcher,
+        remote_name: &'a str,
+    ) -> Vec<String> {
+        self.repo
+            .view()
+            .local_remote_bookmarks_matching(matcher, RemoteName::new(remote_name))
+            .filter_map(|(bookmark_name, local_remote_ref)| {
+                if local_remote_ref.remote_ref.is_present() {
+                    Some(bookmark_name.as_symbol().to_string())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Build a dependency graph of local bookmarks
     pub async fn resolve_bookmarks_graph(&self) -> Result<BookmarkGraph> {
         let revset = get_valid_bookmarks_revset(&self.workspace, &self.repo)
             .context("Failed to get revset")?;
@@ -120,26 +137,16 @@ fn get_valid_bookmarks_revset<'repo>(
 
 #[derive(Debug)]
 pub struct BookmarkNode {
-    commit_id: CommitId,
+    pub commit_id: CommitId,
     pub name: String,
-    pub remote_name: String,
-    remote_ref: RemoteRef,
     pub parent_name: Option<String>,
 }
 
 impl BookmarkNode {
-    pub fn new(
-        commit_id: CommitId,
-        name: String,
-        remote_name: String,
-        remote_ref: RemoteRef,
-        parent_name: Option<String>,
-    ) -> Self {
+    pub fn new(commit_id: CommitId, name: String, parent_name: Option<String>) -> Self {
         Self {
             commit_id,
             name,
-            remote_name,
-            remote_ref,
             parent_name,
         }
     }
@@ -188,7 +195,7 @@ impl<'a> IntoIterator for &'a BookmarkGraph {
 /// TODO: Make the structure/api better
 async fn build_bookmark_graph_from_revset(
     revset: &dyn Revset,
-    bookmarks_map: &HashMap<CommitId, (String, String, RemoteRef)>,
+    bookmarks_map: &HashMap<CommitId, String>,
 ) -> Result<BookmarkGraph> {
     // Don't understand this yet
     let revset_graph = TopoGroupedGraph::new(revset.stream_graph(), |id| id);
@@ -210,7 +217,7 @@ async fn build_bookmark_graph_from_revset(
 
     // Iterate from trunk -> leaves
     for (commit_id, edges) in entries {
-        let (name, remote_name, remote_ref) = bookmarks_map
+        let name = bookmarks_map
             .get(&commit_id)
             .ok_or(anyhow!("No bookmark found for commit {}", commit_id))?;
 
@@ -230,8 +237,6 @@ async fn build_bookmark_graph_from_revset(
         let node = Arc::new(BookmarkNode::new(
             commit_id.clone(),
             name.clone(),
-            remote_name.clone(),
-            remote_ref.clone(),
             parents.first().map(|n| n.name.clone()),
         ));
         seen_nodes.insert(commit_id.clone(), node.clone());
@@ -240,28 +245,19 @@ async fn build_bookmark_graph_from_revset(
     Ok(BookmarkGraph(ordered_bookmarks))
 }
 
-/// Build a mapping from CommitId -> (bookmark name, remote name, RemoteRef). Filters for "origin" remote only for now.
-/// TODO: Support other remote names
-fn build_bookmarks_map(repo: &ReadonlyRepo) -> HashMap<CommitId, (String, String, RemoteRef)> {
+/// Build a mapping from CommitId -> bookmark name for future lookups.
+fn build_bookmarks_map(repo: &ReadonlyRepo) -> HashMap<CommitId, String> {
     let mut map = HashMap::new();
     let view = repo.view();
     for (name, target) in view.bookmarks() {
         if let Some(commit_id) = target.local_target.as_normal()
-            && let Some((remote_name, remote_ref)) = target
+            && let Some(_) = target
                 .remote_refs
-                .into_iter()
-                // TODO: If the remote doesn't exist, we need to push the bookmark
-                // .find(|(name, _)| name.as_str() == "origin")
-                .find(|_| true)
+                .iter()
+                // "git" remote is used internally in jj, for our purposes it means a local bookmark.
+                .find(|(remote_name, _)| remote_name == "git")
         {
-            map.insert(
-                commit_id.clone(),
-                (
-                    name.as_symbol().to_string(),
-                    remote_name.as_symbol().to_string(),
-                    remote_ref.clone(),
-                ),
-            );
+            map.insert(commit_id.clone(), name.as_symbol().to_string());
         }
     }
     map

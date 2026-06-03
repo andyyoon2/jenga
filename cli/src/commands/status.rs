@@ -9,25 +9,20 @@ use crate::utils::get_remote;
 
 pub async fn run_status() -> Result<()> {
     let workspace = WorkspaceHelper::load_new().await?;
-    let ordered_bookmarks = workspace.resolve_bookmarks_graph().await?;
-    eprintln!("{:#?}", ordered_bookmarks);
+    let bookmark_graph = workspace.resolve_bookmarks_graph().await?;
 
+    // TODO: DRY with `fetch_pull_requests` and pass to a rendering layer
     // Check PRs for each bookmark
     let remote = get_remote()?;
-    let futures = ordered_bookmarks.iter().filter_map(|node| {
-        // TODO: This is not right
-        if node.remote_name == "git" {
-            return None;
-        }
-        println!("Checking {}...", node.name);
-        Some(GitHub::retrieve_pull_request(&remote, &node.name))
+    let futures = bookmark_graph.iter().map(|node| {
+        eprintln!("Checking {}...", node.name);
+        GitHub::retrieve_pull_request(&remote, &node.name)
     });
     let results = join_all(futures).await;
-    for (node, result) in zip(ordered_bookmarks, results) {
+    for (node, result) in zip(bookmark_graph, results) {
         match result {
             Ok(maybe_pr) => match maybe_pr {
                 Some(pr) => {
-                    // eprintln!("Found PR {:#?}", pr);
                     println!(
                         "{}: https://github.com/{}/{}/pull/{}",
                         node.name, remote.owner, remote.repository, pr.number

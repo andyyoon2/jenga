@@ -104,6 +104,16 @@ impl GitHub {
         Ok(results.into_iter().next())
     }
 
+    pub async fn get_default_branch(remote: &Remote) -> Result<String, GitHubError> {
+        let token = GitHub::get_access_token()?;
+        let octocrab = Octocrab::builder().personal_token(token).build()?;
+        let repo = octocrab
+            .repos(&remote.owner, &remote.repository)
+            .get()
+            .await?;
+        Ok(repo.default_branch.unwrap_or("main".to_string()))
+    }
+
     fn get_access_token() -> Result<String, GitHubError> {
         env::var("GITHUB_TOKEN")
             .or_else(|_| -> Result<String, GHError> {

@@ -5,7 +5,12 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use github::remote::Remote;
+use futures::future::join_all;
+use github::{
+    PullRequest,
+    github::{GitHub, GitHubError},
+    remote::Remote,
+};
 use stacks::Operation;
 
 /// Get github remote from jj cli
@@ -40,6 +45,39 @@ pub fn push_bookmarks<'a>(
         .status()
 }
 
+pub async fn fetch_pull_requests(bookmarks: &[String]) -> Result<Vec<Option<PullRequest>>> {
+    if bookmarks.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Check PRs for each bookmark
+    let remote = get_remote()?;
+    let futures = bookmarks.iter().map(|name| {
+        eprintln!("Checking {}...", name);
+        GitHub::retrieve_pull_request(&remote, name)
+    });
+
+    let results = join_all(futures).await;
+    results
+        .into_iter()
+        .map(|r| {
+            r.map_err(|e| match e {
+                GitHubError::InvalidToken => anyhow::Error::from(e)
+                    .context("Invalid github token. Set GITHUB_TOKEN or log in with the gh CLI."),
+                _ => anyhow::Error::from(e).context("Failed to fetch PR info"),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+}
+
+// TODO: Obviously we should not be writing this twice. Cleanup the GitHub/Remote abstraction.
+pub async fn get_default_branch() -> Result<String> {
+    let remote = get_remote()?;
+    GitHub::get_default_branch(&remote)
+        .await
+        .context("Failed to get default branch")
+}
+
 #[derive(Debug)]
 pub enum UserOperationConfirmation {
     Confirm,
@@ -54,8 +92,12 @@ impl UserOperationConfirmation {
 }
 
 /// Print the operations to take and get user confirmation
-pub fn confirm_operations(operations: &[Operation], dry_run: bool) -> UserOperationConfirmation {
-    if operations.is_empty() {
+pub fn confirm_operations<'a>(
+    operations: impl Iterator<Item = &'a Operation>,
+    dry_run: bool,
+) -> UserOperationConfirmation {
+    let mut peekable = operations.peekable();
+    if peekable.peek().is_none() {
         eprintln!("Your local stacks match remote. No changes will be made.");
         eprintln!("hint: Run `jj git fetch` to update your view of remote.");
         return UserOperationConfirmation::NoOp;
@@ -63,16 +105,16 @@ pub fn confirm_operations(operations: &[Operation], dry_run: bool) -> UserOperat
 
     if dry_run {
         eprintln!("jenga would perform the following actions:");
-        for operation in operations.iter() {
-            eprintln!("  {}", operation);
+        for operation in peekable {
+            eprintln!("    {}", operation);
         }
         eprintln!("Dry-run: No actions taken.");
         return UserOperationConfirmation::NoOp;
     }
 
     eprintln!("jenga will perform the following actions:");
-    for operation in operations.iter() {
-        eprintln!("  {}", operation);
+    for operation in peekable {
+        eprintln!("    {}", operation);
     }
     eprint!("Continue? (Y/n) ");
     let mut confirmation = String::new();
