@@ -8,7 +8,7 @@ use anyhow::{Context, Result, anyhow};
 use futures::future::join_all;
 use github::{
     PullRequest,
-    github::{GitHub, GitHubError},
+    github::{GitHubClient, GitHubError},
     remote::Remote,
 };
 use stacks::Operation;
@@ -51,10 +51,10 @@ pub async fn fetch_pull_requests(bookmarks: &[String]) -> Result<Vec<Option<Pull
     }
 
     // Check PRs for each bookmark
-    let remote = get_remote()?;
+    let client = GitHubClient::try_load_new()?;
     let futures = bookmarks.iter().map(|name| {
         eprintln!("Checking {}...", name);
-        GitHub::retrieve_pull_request(&remote, name)
+        client.retrieve_pull_request(name)
     });
 
     let results = join_all(futures).await;
@@ -72,10 +72,39 @@ pub async fn fetch_pull_requests(bookmarks: &[String]) -> Result<Vec<Option<Pull
 
 // TODO: Obviously we should not be writing this twice. Cleanup the GitHub/Remote abstraction.
 pub async fn get_default_branch() -> Result<String> {
-    let remote = get_remote()?;
-    GitHub::get_default_branch(&remote)
+    let client = GitHubClient::try_load_new()?;
+    client
+        .get_default_branch()
         .await
         .context("Failed to get default branch")
+}
+
+pub async fn take_pull_request_operations(operations: &[Operation]) -> Result<Vec<PullRequest>> {
+    if operations.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // TODO: Should be one client per CLI invocation, lazy loaded
+    let client = GitHubClient::try_load_new()?;
+    let futures = operations.iter().filter_map(|operation| match operation {
+        Operation::OpenPullRequest(head, base) => {
+            Some(client.create_pull_request(head.clone(), base.clone()))
+        }
+        Operation::EditPullRequest(head, base) => None, // TODO
+        _ => None,
+    });
+
+    let results = join_all(futures).await;
+    results
+        .into_iter()
+        .map(|r| {
+            r.map_err(|e| match e {
+                GitHubError::InvalidToken => anyhow::Error::from(e)
+                    .context("Invalid github token. Set GITHUB_TOKEN or log in with the gh CLI."),
+                _ => anyhow::Error::from(e),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
 }
 
 #[derive(Debug)]

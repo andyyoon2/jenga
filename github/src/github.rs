@@ -1,10 +1,9 @@
 use std::{env, error::Error, fmt, io, process::Command, string};
 
+use anyhow::{Context, anyhow};
 use octocrab::Octocrab;
 
-use crate::{PullRequest, remote::Remote};
-
-pub struct GitHub {}
+use crate::{PullRequest, remote::Remote, structs::PullRequestCreateBody};
 
 #[derive(Debug)]
 pub enum GitHubError {
@@ -70,31 +69,42 @@ impl From<string::FromUtf8Error> for GHError {
     }
 }
 
-impl GitHub {
-    pub async fn list_pull_requests(
-        remote: &Remote,
-    ) -> Result<Option<Vec<PullRequest>>, GitHubError> {
-        let token = GitHub::get_access_token()?;
+pub struct GitHubClient {
+    remote: Remote,
+}
+
+impl GitHubClient {
+    pub fn try_load_new() -> anyhow::Result<Self> {
+        Ok(Self {
+            remote: GitHubClient::get_remote()?,
+        })
+    }
+
+    pub async fn list_pull_requests(&self) -> Result<Option<Vec<PullRequest>>, GitHubError> {
+        let token = GitHubClient::get_access_token()?;
         let octocrab = Octocrab::builder().personal_token(token).build()?;
         Ok(octocrab
             .get(
-                format!("/repos/{}/{}/pulls", remote.owner, remote.repository),
+                format!(
+                    "/repos/{}/{}/pulls",
+                    &self.remote.owner, &self.remote.repository
+                ),
                 None::<&()>,
             )
             .await?)
     }
 
     pub async fn retrieve_pull_request(
-        remote: &Remote,
-        head: &String,
+        &self,
+        head: &str,
     ) -> Result<Option<PullRequest>, GitHubError> {
-        let token = GitHub::get_access_token()?;
+        let token = GitHubClient::get_access_token()?;
         let octocrab = Octocrab::builder().personal_token(token).build()?;
         let results: Vec<PullRequest> = octocrab
             .get(
                 format!(
                     "/repos/{}/{}/pulls?head={}:{}",
-                    remote.owner, remote.repository, remote.owner, head
+                    &self.remote.owner, &self.remote.repository, &self.remote.owner, head
                 ),
                 None::<&()>,
             )
@@ -104,11 +114,41 @@ impl GitHub {
         Ok(results.into_iter().next())
     }
 
-    pub async fn get_default_branch(remote: &Remote) -> Result<String, GitHubError> {
-        let token = GitHub::get_access_token()?;
+    pub async fn create_pull_request(
+        &self,
+        head: String,
+        base: String,
+    ) -> Result<PullRequest, GitHubError> {
+        let body = PullRequestCreateBody {
+            head,
+            base,
+            title: Some("Test PR".to_string()),
+            body: Some("jenga jenga jenga".to_string()),
+            head_repo: None,
+            maintainer_can_modify: None,
+            draft: None,
+            issue: None,
+        };
+
+        let token = GitHubClient::get_access_token()?;
+        let octocrab = Octocrab::builder().personal_token(token).build()?;
+        let pull_request = octocrab
+            .post::<PullRequestCreateBody, PullRequest>(
+                format!(
+                    "/repos/{}/{}/pulls",
+                    &self.remote.owner, &self.remote.repository
+                ),
+                Some(&body),
+            )
+            .await?;
+        Ok(pull_request)
+    }
+
+    pub async fn get_default_branch(&self) -> Result<String, GitHubError> {
+        let token = GitHubClient::get_access_token()?;
         let octocrab = Octocrab::builder().personal_token(token).build()?;
         let repo = octocrab
-            .repos(&remote.owner, &remote.repository)
+            .repos(&self.remote.owner, &self.remote.repository)
             .get()
             .await?;
         Ok(repo.default_branch.unwrap_or("main".to_string()))
@@ -121,6 +161,22 @@ impl GitHub {
                 Ok(String::from_utf8(output.stdout)?.trim().to_string())
             })
             .or(Err(GitHubError::InvalidToken))
+    }
+
+    // TODO: Better err handling
+    fn get_remote() -> anyhow::Result<Remote> {
+        let output = Command::new("jj")
+            .args(["git", "remote", "list"])
+            .output()
+            .context("Failed to list jj remotes")?;
+        let remote_raw = String::from_utf8(output.stdout).context("Not valid UTF-8")?;
+
+        let mut remote_split = remote_raw.split(" ");
+        let (Some(name), Some(url)) = (remote_split.next(), remote_split.next()) else {
+            return Err(anyhow!("Invalid remote format"));
+        };
+
+        Remote::from_url_str(url, name).context("URL Parse error")
     }
 }
 

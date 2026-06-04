@@ -25,7 +25,7 @@ pub struct WorkspaceHelper {
 
 impl WorkspaceHelper {
     /// Loads relevant repo info from the jj workspace on disk.
-    pub async fn load_new() -> Result<Self> {
+    pub async fn try_load_new() -> Result<Self> {
         let workspace = load_workspace()?;
         let repo = load_repo(&workspace).await?;
         let bookmarks = build_bookmarks_map(&repo);

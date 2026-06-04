@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // Semantic API of Octocrab has incorrect types.
 
@@ -55,4 +55,22 @@ pub struct PullRequest {
     pub locked: bool,
     pub active_lock_reason: Option<bool>,
     // TODO: More fields
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PullRequestCreateBody {
+    pub head: String,
+    pub base: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head_repo: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maintainer_can_modify: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue: Option<u64>,
 }

@@ -2,21 +2,22 @@ use std::iter::zip;
 
 use anyhow::Result;
 use futures::future::join_all;
-use github::github::{GitHub, GitHubError};
+use github::github::{GitHubClient, GitHubError};
 use jj::WorkspaceHelper;
 
 use crate::utils::get_remote;
 
 pub async fn run_status() -> Result<()> {
-    let workspace = WorkspaceHelper::load_new().await?;
+    let workspace = WorkspaceHelper::try_load_new().await?;
     let bookmark_graph = workspace.resolve_bookmarks_graph().await?;
 
     // TODO: DRY with `fetch_pull_requests` and pass to a rendering layer
     // Check PRs for each bookmark
     let remote = get_remote()?;
+    let client = GitHubClient::try_load_new()?;
     let futures = bookmark_graph.iter().map(|node| {
         eprintln!("Checking {}...", node.name);
-        GitHub::retrieve_pull_request(&remote, &node.name)
+        client.retrieve_pull_request(&node.name)
     });
     let results = join_all(futures).await;
     for (node, result) in zip(bookmark_graph, results) {
