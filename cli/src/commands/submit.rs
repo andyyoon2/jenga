@@ -2,11 +2,10 @@ use anyhow::Result;
 use clap::Args;
 use jj::WorkspaceHelper;
 use stacks::{Operation, get_bookmark_push_operations, get_operations_for_pull_requests};
-use tokio::try_join;
 
 use crate::utils::{
-    confirm_operations, fetch_pull_requests, get_default_branch, push_bookmarks,
-    take_pull_request_operations,
+    confirm_operations, do_pull_request_operations, fetch_pull_requests, get_default_branch,
+    push_bookmarks,
 };
 
 /// Submit a local stack to remote
@@ -25,12 +24,15 @@ pub async fn run_submit(args: &SubmitArgs) -> Result<()> {
     let remote_bookmarks = workspace.get_bookmarks_on_remote(&matcher, "origin");
 
     let push_actions = workspace.get_bookmark_push_actions(&matcher, "origin");
-    // eprintln!("local bookmarks: {:#?}", bookmark_graph);
-    // eprintln!("remote bookmarks: {:#?}", remote_bookmarks);
 
-    let default_branch_future = get_default_branch();
-    let pull_requests_future = fetch_pull_requests(&remote_bookmarks);
-    let (default_branch, pull_requests) = try_join!(default_branch_future, pull_requests_future)?;
+    // TODO: Improve parallelism
+    let default_branch = get_default_branch().await?;
+    let pull_requests = fetch_pull_requests(
+        remote_bookmarks
+            .iter()
+            .filter(|bookmark_name| **bookmark_name != default_branch),
+    )
+    .await?;
 
     let push_operations = get_bookmark_push_operations(&push_actions);
     let pr_operations =
@@ -59,7 +61,7 @@ pub async fn run_submit(args: &SubmitArgs) -> Result<()> {
     }
 
     // TODO: Take input for title/body/other params
-    take_pull_request_operations(&pr_operations).await?;
+    do_pull_request_operations(&pr_operations).await?;
 
     Ok(())
 }

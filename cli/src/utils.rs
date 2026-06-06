@@ -45,14 +45,18 @@ pub fn push_bookmarks<'a>(
         .status()
 }
 
-pub async fn fetch_pull_requests(bookmarks: &[String]) -> Result<Vec<Option<PullRequest>>> {
-    if bookmarks.is_empty() {
+pub async fn fetch_pull_requests<'a, I>(bookmarks: I) -> Result<Vec<Option<PullRequest>>>
+where
+    I: Iterator<Item = &'a String>,
+{
+    let mut bookmarks = bookmarks.peekable();
+    if bookmarks.peek().is_none() {
         return Ok(vec![]);
     }
 
     // Check PRs for each bookmark
     let client = GitHubClient::try_load_new()?;
-    let futures = bookmarks.iter().map(|name| {
+    let futures = bookmarks.map(|name| {
         eprintln!("Checking {}...", name);
         client.retrieve_pull_request(name)
     });
@@ -79,7 +83,7 @@ pub async fn get_default_branch() -> Result<String> {
         .context("Failed to get default branch")
 }
 
-pub async fn take_pull_request_operations(operations: &[Operation]) -> Result<Vec<PullRequest>> {
+pub async fn do_pull_request_operations(operations: &[Operation]) -> Result<Vec<PullRequest>> {
     if operations.is_empty() {
         return Ok(vec![]);
     }
@@ -90,7 +94,7 @@ pub async fn take_pull_request_operations(operations: &[Operation]) -> Result<Ve
         Operation::OpenPullRequest(head, base) => {
             Some(client.create_pull_request(head.clone(), base.clone()))
         }
-        Operation::EditPullRequest(head, base) => None, // TODO
+        // Operation::EditPullRequest(head, base) => None, // TODO
         _ => None,
     });
 
@@ -145,15 +149,19 @@ pub fn confirm_operations<'a>(
     for operation in peekable {
         eprintln!("    {}", operation);
     }
-    eprint!("Continue? (Y/n) ");
-    let mut confirmation = String::new();
-    io::stdin()
-        .read_line(&mut confirmation)
-        .expect("Failed to read input");
-    let confirmation = confirmation.trim();
+    let confirmation = prompt_and_read_line("Continue? (Y/n)");
     if !confirmation.is_empty() && confirmation.to_lowercase() != "y" {
         eprintln!("Operation cancelled.");
         return UserOperationConfirmation::Cancel;
     }
     UserOperationConfirmation::Confirm
+}
+
+fn prompt_and_read_line(prompt: &str) -> String {
+    eprint!("{} ", prompt);
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .expect("Failed to read input");
+    input.trim().to_string()
 }
