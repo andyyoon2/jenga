@@ -83,33 +83,49 @@ pub async fn get_default_branch() -> Result<String> {
         .context("Failed to get default branch")
 }
 
-pub async fn do_pull_request_operations(operations: &[Operation]) -> Result<Vec<PullRequest>> {
-    if operations.is_empty() {
-        return Ok(vec![]);
-    }
-
+// TODO: Obviously we should not be writing this twice. Cleanup the GitHub/Remote abstraction.
+pub async fn create_pull_request(
+    head: String,
+    base: String,
+    title: Option<String>,
+    body: Option<String>,
+    draft: Option<bool>,
+) -> Result<PullRequest> {
     // TODO: Should be one client per CLI invocation, lazy loaded
     let client = GitHubClient::try_load_new()?;
-    let futures = operations.iter().filter_map(|operation| match operation {
-        Operation::OpenPullRequest(head, base) => {
-            Some(client.create_pull_request(head.clone(), base.clone()))
-        }
-        // Operation::EditPullRequest(head, base) => None, // TODO
-        _ => None,
-    });
-
-    let results = join_all(futures).await;
-    results
-        .into_iter()
-        .map(|r| {
-            r.map_err(|e| match e {
-                GitHubError::InvalidToken => anyhow::Error::from(e)
-                    .context("Invalid github token. Set GITHUB_TOKEN or log in with the gh CLI."),
-                _ => anyhow::Error::from(e),
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()
+    client
+        .create_pull_request(head, base, title, body, draft)
+        .await
+        .context("Failed to create pull request")
 }
+
+// pub async fn do_pull_request_operations(operations: &[Operation]) -> Result<Vec<PullRequest>> {
+//     if operations.is_empty() {
+//         return Ok(vec![]);
+//     }
+
+//     // TODO: Should be one client per CLI invocation, lazy loaded
+//     let client = GitHubClient::try_load_new()?;
+//     let futures = operations.iter().filter_map(|operation| match operation {
+//         Operation::OpenPullRequest(head, base) => {
+//             Some(client.create_pull_request(head.clone(), base.clone()))
+//         }
+//         // Operation::EditPullRequest(head, base) => None, // TODO
+//         _ => None,
+//     });
+
+//     let results = join_all(futures).await;
+//     results
+//         .into_iter()
+//         .map(|r| {
+//             r.map_err(|e| match e {
+//                 GitHubError::InvalidToken => anyhow::Error::from(e)
+//                     .context("Invalid github token. Set GITHUB_TOKEN or log in with the gh CLI."),
+//                 _ => anyhow::Error::from(e),
+//             })
+//         })
+//         .collect::<Result<Vec<_>, _>>()
+// }
 
 #[derive(Debug)]
 pub enum UserOperationConfirmation {
@@ -157,7 +173,7 @@ pub fn confirm_operations<'a>(
     UserOperationConfirmation::Confirm
 }
 
-fn prompt_and_read_line(prompt: &str) -> String {
+pub fn prompt_and_read_line(prompt: &str) -> String {
     eprint!("{} ", prompt);
     let mut input = String::new();
     io::stdin()

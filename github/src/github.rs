@@ -118,15 +118,18 @@ impl GitHubClient {
         &self,
         head: String,
         base: String,
+        title: Option<String>,
+        body: Option<String>,
+        draft: Option<bool>,
     ) -> Result<PullRequest, GitHubError> {
         let body = PullRequestCreateBody {
             head,
             base,
-            title: Some("Test PR".to_string()),
-            body: Some("jenga jenga jenga".to_string()),
+            title,
+            body,
             head_repo: None,
             maintainer_can_modify: None,
-            draft: None,
+            draft,
             issue: None,
         };
 
