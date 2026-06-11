@@ -70,7 +70,7 @@ impl From<string::FromUtf8Error> for GHError {
 }
 
 pub struct GitHubClient {
-    remote: Remote,
+    pub remote: Remote,
 }
 
 impl GitHubClient {

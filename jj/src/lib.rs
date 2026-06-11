@@ -17,13 +17,13 @@ use jj_lib::{
 };
 
 /// Owns workspace and relevant state
-pub struct WorkspaceHelper {
+pub struct WorkspaceContext {
     workspace: Workspace,
     repo: Arc<ReadonlyRepo>,
     bookmarks: HashMap<CommitId, String>,
 }
 
-impl WorkspaceHelper {
+impl WorkspaceContext {
     /// Loads relevant repo info from the jj workspace on disk.
     pub async fn try_load_new() -> Result<Self> {
         let workspace = load_workspace()?;

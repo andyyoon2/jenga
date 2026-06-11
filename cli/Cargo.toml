@@ -13,5 +13,6 @@ clap = { workspace = true }
 futures = { workspace = true }
 github = { path = "../github" }
 jj = { path = "../jj" }
+once_cell = { workspace = true }
 stacks = { path = "../stacks" }
 tokio = { workspace = true }

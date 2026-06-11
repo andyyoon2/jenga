@@ -8,6 +8,7 @@ static REMOTE_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Remote {
+    pub base_url: String,
     pub name: String,
     pub owner: String,
     pub repository: String,
@@ -28,6 +29,7 @@ impl Remote {
             return Err(RemoteParseError::NotImplemented);
         }
         Ok(Self {
+            base_url: format!("https://{}.com", &caps[1]), // TODO: Bad
             name: name.to_owned(),
             owner: caps[2].to_owned(),
             repository: caps[3].to_owned(),

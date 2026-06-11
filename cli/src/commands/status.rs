@@ -2,19 +2,18 @@ use std::iter::zip;
 
 use anyhow::Result;
 use futures::future::join_all;
-use github::github::{GitHubClient, GitHubError};
-use jj::WorkspaceHelper;
+use github::github::GitHubError;
 
-use crate::utils::get_remote;
+use crate::utils::CliContext;
 
 pub async fn run_status() -> Result<()> {
-    let workspace = WorkspaceHelper::try_load_new().await?;
+    let context = CliContext::new();
+    let workspace = context.workspace().await?;
     let bookmark_graph = workspace.resolve_bookmarks_graph().await?;
 
     // TODO: DRY with `fetch_pull_requests` and pass to a rendering layer
     // Check PRs for each bookmark
-    let remote = get_remote()?;
-    let client = GitHubClient::try_load_new()?;
+    let client = context.client()?;
     let futures = bookmark_graph.iter().map(|node| {
         eprintln!("Checking {}...", node.name);
         client.retrieve_pull_request(&node.name)
@@ -25,8 +24,12 @@ pub async fn run_status() -> Result<()> {
             Ok(maybe_pr) => match maybe_pr {
                 Some(pr) => {
                     println!(
-                        "{}: https://github.com/{}/{}/pull/{}",
-                        node.name, remote.owner, remote.repository, pr.number
+                        "{}: {}/{}/{}/pull/{}",
+                        node.name,
+                        client.remote.base_url,
+                        client.remote.owner,
+                        client.remote.repository,
+                        pr.number
                     );
                 }
                 None => {

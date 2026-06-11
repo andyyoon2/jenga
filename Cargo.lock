@@ -320,6 +320,7 @@ dependencies = [
  "futures",
  "github",
  "jj",
+ "once_cell",
  "stacks",
  "tokio",
 ]

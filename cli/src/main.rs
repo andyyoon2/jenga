@@ -1,13 +1,10 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::commands::{
+use cli::commands::{
     status::run_status,
     submit::{SubmitArgs, run_submit},
 };
-
-mod commands;
-pub mod utils;
 
 /// Submit your jj stack to GitHub.
 #[derive(Parser, Debug)]
