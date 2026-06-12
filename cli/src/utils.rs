@@ -20,6 +20,12 @@ pub struct CliContext {
     workspace: tokio::sync::OnceCell<WorkspaceContext>,
 }
 
+impl Default for CliContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CliContext {
     pub fn new() -> Self {
         Self {
@@ -30,7 +36,7 @@ impl CliContext {
     }
 
     pub fn client(&self) -> Result<&GitHubClient> {
-        self.client.get_or_try_init(|| GitHubClient::try_load_new())
+        self.client.get_or_try_init(GitHubClient::try_load_new)
     }
 
     pub async fn default_branch(&self) -> Result<&String> {

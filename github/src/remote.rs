@@ -2,8 +2,7 @@ use regex::Regex;
 use std::{error::Error, fmt, sync::LazyLock};
 
 static REMOTE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"https://([A-Za-z0-9-_]+).com/([A-Za-z0-9-_\d]+)/([A-Za-z0-9-_\d]+)(?:.git)?")
-        .unwrap()
+    Regex::new(r"([A-Za-z0-9-_]+)\.com[/:]([A-Za-z0-9-_\d]+)/([A-Za-z0-9-_\d]+)(?:.git)?").unwrap()
 });
 
 #[derive(Debug, PartialEq, Eq)]
@@ -41,7 +40,7 @@ impl fmt::Display for RemoteParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidFormat => write!(f, "Invalid remote format"),
-            Self::NotImplemented => write!(f, "Sorry, this remote is not supported"),
+            Self::NotImplemented => write!(f, "Sorry, this git forge is not supported"),
         }
     }
 }
@@ -53,8 +52,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_valid_string_format() {
+    fn parses_valid_http_url() {
         let remote = Remote::from_url_str("https://github.com/foo/bar.git", "origin").unwrap();
+        assert_eq!(remote.owner, "foo");
+        assert_eq!(remote.repository, "bar");
+    }
+
+    #[test]
+    fn parses_valid_ssh_url() {
+        let remote = Remote::from_url_str("git@github.com:foo/bar.git", "origin").unwrap();
         assert_eq!(remote.owner, "foo");
         assert_eq!(remote.repository, "bar");
     }

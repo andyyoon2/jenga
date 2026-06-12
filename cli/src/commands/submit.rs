@@ -33,7 +33,7 @@ pub async fn run_submit(args: &SubmitArgs) -> Result<()> {
 
     let push_operations = get_bookmark_push_operations(&push_actions);
     let pr_operations =
-        get_operations_for_pull_requests(&bookmark_graph, &pull_requests, &default_branch);
+        get_operations_for_pull_requests(&bookmark_graph, &pull_requests, default_branch);
     // eprintln!("{:#?}", bookmark_graph);
     // eprintln!("{:#?}", push_operations);
     // eprintln!("{:#?}", pr_operations);
