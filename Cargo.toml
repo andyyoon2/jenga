@@ -5,6 +5,7 @@ members = ["cli", "github", "jj", "stacks"]
 [workspace.dependencies]
 anyhow = "1.0"
 clap = { version = "4.6.1", features = ["derive"] }
+dialoguer = { version = "0.12.0", features = ["editor"] }
 futures = "0.3"
 http = "1.4.0"
 jj-lib = { version = "0.41.0", features = ["git"] }

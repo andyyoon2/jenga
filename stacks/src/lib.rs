@@ -11,7 +11,7 @@ use jj_lib::refs::RefPushAction;
 pub enum Operation {
     Push(String),
     /// head, base
-    OpenPullRequest(String, String),
+    CreatePullRequest(String, String),
     /// head, base
     EditPullRequest(String, String),
 }
@@ -20,7 +20,7 @@ impl Display for Operation {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Operation::Push(name) => write!(f, "Push {}", name),
-            Operation::OpenPullRequest(head, base) => write!(f, "Open PR {} -> {}", head, base),
+            Operation::CreatePullRequest(head, base) => write!(f, "Create PR {} -> {}", head, base),
             Operation::EditPullRequest(head, base) => write!(f, "Edit PR {} -> {}", head, base),
         }
     }
@@ -90,7 +90,7 @@ pub fn get_operations_for_pull_requests(
                     }
                 }
                 // If a PR doesn't exist, open a new PR
-                _ => Some(Operation::OpenPullRequest(
+                _ => Some(Operation::CreatePullRequest(
                     node.name.clone(),
                     node.parent_name
                         .clone()

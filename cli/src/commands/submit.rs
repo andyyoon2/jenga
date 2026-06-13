@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::Args;
 use stacks::{Operation, get_bookmark_push_operations, get_operations_for_pull_requests};
 
-use crate::utils::{CliContext, confirm_operations, prompt_and_read_line, push_bookmarks};
+use crate::utils::{CliContext, confirm_operations, prompt_confirm, prompt_input, push_bookmarks};
 
 /// Submit a local stack to remote
 #[derive(Args, Debug)]
@@ -42,7 +42,7 @@ pub async fn run_submit(args: &SubmitArgs) -> Result<()> {
     let user_confirmation = confirm_operations(
         push_operations.iter().chain(pr_operations.iter()),
         args.dry_run,
-    );
+    )?;
     if !user_confirmation.is_confirm() {
         return Ok(()); // TODO: Exit code if canceled
     }
@@ -63,16 +63,15 @@ pub async fn run_submit(args: &SubmitArgs) -> Result<()> {
     let client = context.client()?;
     for operation in &pr_operations {
         match operation {
-            Operation::OpenPullRequest(head, base) => {
+            Operation::CreatePullRequest(head, base) => {
                 eprintln!("\nCreating PR {} -> {}\n", head, base);
                 // TODO: Get defaults for title/body from commit msg
-                let title = prompt_and_read_line("Title (required)");
+                let title = prompt_input("Title (required)")?;
                 if title.is_empty() {
                     return Err(anyhow!("Operation cancelled."));
                 }
-                let body = prompt_and_read_line("Body");
-                let draft = prompt_and_read_line("Draft? (y/N)");
-                let draft = draft.to_lowercase() == "y";
+                let body = prompt_input("Body")?;
+                let draft = prompt_confirm("Draft?", false)?;
                 let pr = client
                     .create_pull_request(
                         head.clone(),

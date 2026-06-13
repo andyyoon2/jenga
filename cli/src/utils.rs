@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use dialoguer::{Confirm, Input, theme::ColorfulTheme};
 use futures::future::join_all;
 use jj::WorkspaceContext;
 use std::{
@@ -120,12 +121,12 @@ impl UserOperationConfirmation {
 pub fn confirm_operations<'a>(
     operations: impl Iterator<Item = &'a Operation>,
     dry_run: bool,
-) -> UserOperationConfirmation {
+) -> Result<UserOperationConfirmation> {
     let mut peekable = operations.peekable();
     if peekable.peek().is_none() {
         eprintln!("Your local stacks match remote. No changes will be made.");
         eprintln!("hint: Run `jj git fetch` to update your view of remote.");
-        return UserOperationConfirmation::NoOp;
+        return Ok(UserOperationConfirmation::NoOp);
     }
 
     if dry_run {
@@ -134,26 +135,33 @@ pub fn confirm_operations<'a>(
             eprintln!("    {}", operation);
         }
         eprintln!("Dry-run: No actions taken.");
-        return UserOperationConfirmation::NoOp;
+        return Ok(UserOperationConfirmation::NoOp);
     }
 
     eprintln!("jenga will perform the following actions:");
     for operation in peekable {
         eprintln!("    {}", operation);
     }
-    let confirmation = prompt_and_read_line("Continue? (Y/n)");
-    if !confirmation.is_empty() && confirmation.to_lowercase() != "y" {
+    let confirmation = prompt_confirm("Continue?", true)?;
+    if confirmation {
+        Ok(UserOperationConfirmation::Confirm)
+    } else {
         eprintln!("Operation cancelled.");
-        return UserOperationConfirmation::Cancel;
+        Ok(UserOperationConfirmation::Cancel)
     }
-    UserOperationConfirmation::Confirm
 }
 
-pub fn prompt_and_read_line(prompt: &str) -> String {
-    eprint!("{} ", prompt);
-    let mut input = String::new();
-    io::stdin()
-        .read_line(&mut input)
-        .expect("Failed to read input");
-    input.trim().to_string()
+pub fn prompt_confirm(prompt: &str, default: bool) -> Result<bool> {
+    Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt(prompt)
+        .default(default)
+        .interact()
+        .context("Failed to read input")
+}
+
+pub fn prompt_input(prompt: &str) -> Result<String> {
+    Input::with_theme(&ColorfulTheme::default())
+        .with_prompt(prompt)
+        .interact()
+        .context("Failed to read input")
 }
