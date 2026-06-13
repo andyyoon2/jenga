@@ -121,6 +121,7 @@ impl UserOperationConfirmation {
 pub fn confirm_operations<'a>(
     operations: impl Iterator<Item = &'a Operation>,
     dry_run: bool,
+    default_branch: &str,
 ) -> Result<UserOperationConfirmation> {
     let mut peekable = operations.peekable();
     if peekable.peek().is_none() {
@@ -132,7 +133,7 @@ pub fn confirm_operations<'a>(
     if dry_run {
         eprintln!("jenga would perform the following actions:");
         for operation in peekable {
-            eprintln!("    {}", operation);
+            eprintln!("    {}", operation.render(default_branch));
         }
         eprintln!("Dry-run: No actions taken.");
         return Ok(UserOperationConfirmation::NoOp);
@@ -140,7 +141,7 @@ pub fn confirm_operations<'a>(
 
     eprintln!("jenga will perform the following actions:");
     for operation in peekable {
-        eprintln!("    {}", operation);
+        eprintln!("    {}", operation.render(default_branch));
     }
     let confirmation = prompt_confirm("Continue?", true)?;
     if confirmation {
@@ -159,9 +160,10 @@ pub fn prompt_confirm(prompt: &str, default: bool) -> Result<bool> {
         .context("Failed to read input")
 }
 
-pub fn prompt_input(prompt: &str) -> Result<String> {
+pub fn prompt_input(prompt: &str, required: bool) -> Result<String> {
     Input::with_theme(&ColorfulTheme::default())
         .with_prompt(prompt)
+        .allow_empty(!required)
         .interact()
         .context("Failed to read input")
 }

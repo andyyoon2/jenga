@@ -42,6 +42,7 @@ pub async fn run_submit(args: &SubmitArgs) -> Result<()> {
     let user_confirmation = confirm_operations(
         push_operations.iter().chain(pr_operations.iter()),
         args.dry_run,
+        &default_branch,
     )?;
     if !user_confirmation.is_confirm() {
         return Ok(()); // TODO: Exit code if canceled
@@ -63,19 +64,21 @@ pub async fn run_submit(args: &SubmitArgs) -> Result<()> {
     let client = context.client()?;
     for operation in &pr_operations {
         match operation {
-            Operation::CreatePullRequest(head, base) => {
-                eprintln!("\nCreating PR {} -> {}\n", head, base);
+            Operation::CreatePullRequest(node) => {
+                let head = &node.name;
+                let base = node.parent_name.as_deref().unwrap_or(default_branch);
+                eprintln!("\nCreating PR {} -> {}", head, base);
                 // TODO: Get defaults for title/body from commit msg
-                let title = prompt_input("Title (required)")?;
+                let title = prompt_input("Title (required)", true)?;
                 if title.is_empty() {
                     return Err(anyhow!("Operation cancelled."));
                 }
-                let body = prompt_input("Body")?;
+                let body = prompt_input("Body", false)?;
                 let draft = prompt_confirm("Draft?", false)?;
                 let pr = client
                     .create_pull_request(
                         head.clone(),
-                        base.clone(),
+                        base.to_string(),
                         Some(title),
                         Some(body),
                         Some(draft),
@@ -83,7 +86,7 @@ pub async fn run_submit(args: &SubmitArgs) -> Result<()> {
                     .await
                     .context("Failed to create pull request")?;
                 eprintln!(
-                    "Created pull request {} -> {}\n{}/{}/{}/pull/{}",
+                    "Created PR {} -> {}\n{}/{}/{}/pull/{}",
                     pr.head.ref_name,
                     pr.base.ref_name,
                     client.remote.base_url,

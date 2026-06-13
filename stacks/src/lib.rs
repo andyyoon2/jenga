@@ -1,9 +1,9 @@
 //! Code which integrates jj and remote operations.
 
-use std::fmt::{self, Display, Formatter};
+use std::rc::Rc;
 
 use github::PullRequest;
-use jj::BookmarkGraph;
+use jj::{BookmarkGraph, BookmarkNode};
 use jj_lib::refs::RefPushAction;
 
 /// An action to be taken on remote
@@ -11,17 +11,29 @@ use jj_lib::refs::RefPushAction;
 pub enum Operation {
     Push(String),
     /// head, base
-    CreatePullRequest(String, String),
+    CreatePullRequest(Rc<BookmarkNode>),
     /// head, base
-    EditPullRequest(String, String),
+    EditPullRequest(Rc<BookmarkNode>),
 }
 
-impl Display for Operation {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+impl Operation {
+    pub fn render(&self, default_branch: &str) -> String {
         match self {
-            Operation::Push(name) => write!(f, "Push {}", name),
-            Operation::CreatePullRequest(head, base) => write!(f, "Create PR {} -> {}", head, base),
-            Operation::EditPullRequest(head, base) => write!(f, "Edit PR {} -> {}", head, base),
+            Operation::Push(name) => name.to_owned(),
+            Operation::CreatePullRequest(node) => {
+                format!(
+                    "Create PR {} -> {}",
+                    node.name,
+                    node.parent_name.as_deref().unwrap_or(default_branch)
+                )
+            }
+            Operation::EditPullRequest(node) => {
+                format!(
+                    "Create PR {} -> {}",
+                    node.name,
+                    node.parent_name.as_deref().unwrap_or(default_branch)
+                )
+            }
         }
     }
 }
@@ -50,9 +62,7 @@ pub fn get_operations_for_pull_requests(
     bookmark_graph
         .iter()
         .filter_map(|node| {
-            // TODO: Not great but let's try this
             match pull_requests.iter().find(|maybe_pr| {
-                // This feels pretty wrong
                 if let Some(pr) = maybe_pr {
                     pr.head.ref_name == node.name
                 } else {
@@ -60,42 +70,24 @@ pub fn get_operations_for_pull_requests(
                 }
             }) {
                 // If a PR exists, check that its base matches local
-                Some(Some(pr)) => {
-                    match &node.parent_name {
-                        Some(local_base_name) => {
-                            if pr.base.ref_name == *local_base_name {
-                                None
-                            } else {
-                                // TODO: So much cloning. Can we use the Arc better
-                                Some(Operation::EditPullRequest(
-                                    node.name.clone(),
-                                    node.parent_name
-                                        .clone()
-                                        .unwrap_or(default_branch.to_owned()),
-                                ))
-                            }
-                        }
-                        None => {
-                            if pr.base.ref_name == default_branch {
-                                None
-                            } else {
-                                Some(Operation::EditPullRequest(
-                                    node.name.clone(),
-                                    node.parent_name
-                                        .clone()
-                                        .unwrap_or(default_branch.to_owned()),
-                                ))
-                            }
+                Some(Some(pr)) => match &node.parent_name {
+                    Some(local_base_name) => {
+                        if pr.base.ref_name == *local_base_name {
+                            None
+                        } else {
+                            Some(Operation::EditPullRequest(node.clone()))
                         }
                     }
-                }
+                    None => {
+                        if pr.base.ref_name == default_branch {
+                            None
+                        } else {
+                            Some(Operation::EditPullRequest(node.clone()))
+                        }
+                    }
+                },
                 // If a PR doesn't exist, open a new PR
-                _ => Some(Operation::CreatePullRequest(
-                    node.name.clone(),
-                    node.parent_name
-                        .clone()
-                        .unwrap_or(default_branch.to_owned()),
-                )),
+                _ => Some(Operation::CreatePullRequest(node.clone())),
             }
         })
         .collect()

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use futures::{StreamExt, TryStreamExt, stream::LocalBoxStream};
-use std::{collections::HashMap, env, sync::Arc};
+use std::{collections::HashMap, env, rc::Rc, sync::Arc};
 
 use jj_lib::{
     backend::CommitId,
@@ -154,10 +154,10 @@ impl BookmarkNode {
 
 /// Linear dependency graph of bookmarks
 #[derive(Debug)]
-pub struct BookmarkGraph(Vec<Arc<BookmarkNode>>);
+pub struct BookmarkGraph(Vec<Rc<BookmarkNode>>);
 
 impl BookmarkGraph {
-    pub fn iter(&self) -> impl Iterator<Item = &Arc<BookmarkNode>> {
+    pub fn iter(&self) -> impl Iterator<Item = &Rc<BookmarkNode>> {
         self.0.iter()
     }
 
@@ -172,8 +172,8 @@ impl BookmarkGraph {
 }
 
 impl IntoIterator for BookmarkGraph {
-    type Item = Arc<BookmarkNode>;
-    type IntoIter = std::vec::IntoIter<Arc<BookmarkNode>>;
+    type Item = Rc<BookmarkNode>;
+    type IntoIter = std::vec::IntoIter<Rc<BookmarkNode>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
@@ -181,8 +181,8 @@ impl IntoIterator for BookmarkGraph {
 }
 
 impl<'a> IntoIterator for &'a BookmarkGraph {
-    type Item = &'a Arc<BookmarkNode>;
-    type IntoIter = std::slice::Iter<'a, Arc<BookmarkNode>>;
+    type Item = &'a Rc<BookmarkNode>;
+    type IntoIter = std::slice::Iter<'a, Rc<BookmarkNode>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
@@ -212,7 +212,7 @@ async fn build_bookmark_graph_from_revset(
     }
     entries.reverse();
 
-    let mut seen_nodes: HashMap<CommitId, Arc<BookmarkNode>> = HashMap::new();
+    let mut seen_nodes: HashMap<CommitId, Rc<BookmarkNode>> = HashMap::new();
     let mut ordered_bookmarks = vec![];
 
     // Iterate from trunk -> leaves
@@ -234,7 +234,7 @@ async fn build_bookmark_graph_from_revset(
             ));
         }
 
-        let node = Arc::new(BookmarkNode::new(
+        let node = Rc::new(BookmarkNode::new(
             commit_id.clone(),
             name.clone(),
             parents.first().map(|n| n.name.clone()),
