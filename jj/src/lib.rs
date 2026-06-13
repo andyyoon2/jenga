@@ -4,12 +4,13 @@ use std::{collections::HashMap, env, rc::Rc, sync::Arc};
 
 use jj_lib::{
     backend::CommitId,
+    commit::Commit,
     config::StackedConfig,
     graph::{GraphEdge, TopoGroupedGraph},
     id_prefix::IdPrefixContext,
     ref_name::RemoteName,
     refs::{RefPushAction, classify_ref_push_action},
-    repo::{ReadonlyRepo, StoreFactories},
+    repo::{ReadonlyRepo, Repo, StoreFactories},
     revset::{Revset, RevsetExtensions, SymbolResolver, UserRevsetExpression},
     settings::UserSettings,
     str_util::{StringExpression, StringMatcher, StringPattern},
@@ -83,6 +84,13 @@ impl WorkspaceContext {
             .context("Failed to get revset")?;
         // Deref the Box (Box<dyn Revset>), then get a ref to it (&dyn Revset)
         build_bookmark_graph_from_revset(&*revset, &self.bookmarks).await
+    }
+
+    pub fn get_commit(&self, commit_id: &CommitId) -> Result<Commit> {
+        self.repo
+            .store()
+            .get_commit(commit_id)
+            .context(format!("Failed to read commit {}", commit_id))
     }
 }
 
@@ -162,12 +170,12 @@ impl BookmarkGraph {
     }
 
     pub fn try_to_matcher(&self) -> Result<StringMatcher> {
-        let bookmark_names_expr = self
+        let combined_bookmark_names = self
             .iter()
             .map(|node| node.name.clone())
             .collect::<Vec<_>>()
             .join("|");
-        Ok(StringPattern::regex(&bookmark_names_expr)?.to_matcher())
+        Ok(StringPattern::regex(&format!("^({})$", combined_bookmark_names))?.to_matcher())
     }
 }
 

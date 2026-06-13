@@ -160,10 +160,15 @@ pub fn prompt_confirm(prompt: &str, default: bool) -> Result<bool> {
         .context("Failed to read input")
 }
 
-pub fn prompt_input(prompt: &str, required: bool) -> Result<String> {
-    Input::with_theme(&ColorfulTheme::default())
+pub fn prompt_input(prompt: &str, default: Option<&str>, required: bool) -> Result<String> {
+    let theme = ColorfulTheme::default();
+    let mut input = Input::with_theme(&theme)
         .with_prompt(prompt)
-        .allow_empty(!required)
-        .interact()
-        .context("Failed to read input")
+        .allow_empty(!required);
+
+    if let Some(s) = default {
+        input = input.default(s.to_string());
+    }
+
+    input.interact().context("Failed to read input")
 }

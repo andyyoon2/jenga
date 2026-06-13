@@ -34,6 +34,7 @@ pub async fn run_submit(args: &SubmitArgs) -> Result<()> {
     let push_operations = get_bookmark_push_operations(&push_actions);
     let pr_operations =
         get_operations_for_pull_requests(&bookmark_graph, &pull_requests, default_branch);
+
     // eprintln!("{:#?}", bookmark_graph);
     // eprintln!("{:#?}", push_operations);
     // eprintln!("{:#?}", pr_operations);
@@ -42,7 +43,7 @@ pub async fn run_submit(args: &SubmitArgs) -> Result<()> {
     let user_confirmation = confirm_operations(
         push_operations.iter().chain(pr_operations.iter()),
         args.dry_run,
-        &default_branch,
+        default_branch,
     )?;
     if !user_confirmation.is_confirm() {
         return Ok(()); // TODO: Exit code if canceled
@@ -67,13 +68,28 @@ pub async fn run_submit(args: &SubmitArgs) -> Result<()> {
             Operation::CreatePullRequest(node) => {
                 let head = &node.name;
                 let base = node.parent_name.as_deref().unwrap_or(default_branch);
+
+                // Parse commit message
+                let commit = workspace.get_commit(&node.commit_id)?;
+                let commit_title: Option<&str>;
+                let commit_body: Option<&str>;
+                match commit.description().split_once("\n\n") {
+                    Some((t, b)) => {
+                        commit_title = Some(t.trim());
+                        commit_body = Some(b.trim());
+                    }
+                    None => {
+                        commit_title = None;
+                        commit_body = None;
+                    }
+                }
+
                 eprintln!("\nCreating PR {} -> {}", head, base);
-                // TODO: Get defaults for title/body from commit msg
-                let title = prompt_input("Title (required)", true)?;
+                let title = prompt_input("Title (required)", commit_title, true)?;
                 if title.is_empty() {
                     return Err(anyhow!("Operation cancelled."));
                 }
-                let body = prompt_input("Body", false)?;
+                let body = prompt_input("Body", commit_body, false)?;
                 let draft = prompt_confirm("Draft?", false)?;
                 let pr = client
                     .create_pull_request(

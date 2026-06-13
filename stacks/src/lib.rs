@@ -19,7 +19,7 @@ pub enum Operation {
 impl Operation {
     pub fn render(&self, default_branch: &str) -> String {
         match self {
-            Operation::Push(name) => name.to_owned(),
+            Operation::Push(name) => format!("Push {}", name),
             Operation::CreatePullRequest(node) => {
                 format!(
                     "Create PR {} -> {}",
@@ -29,7 +29,7 @@ impl Operation {
             }
             Operation::EditPullRequest(node) => {
                 format!(
-                    "Create PR {} -> {}",
+                    "Edit PR {} -> {}",
                     node.name,
                     node.parent_name.as_deref().unwrap_or(default_branch)
                 )
