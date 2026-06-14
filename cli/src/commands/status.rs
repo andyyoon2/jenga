@@ -1,53 +1,44 @@
-use std::iter::zip;
-
 use anyhow::Result;
-use futures::future::join_all;
-use github::github::GitHubError;
 
-use crate::utils::CliContext;
+use crate::{render::Renderer, utils::CliContext};
 
 pub async fn run_status() -> Result<()> {
     let context = CliContext::new();
     let workspace = context.workspace().await?;
-    let bookmark_graph = workspace.resolve_bookmarks_graph().await?;
+    let default_branch = context.default_branch().await?;
+    let bookmark_graph = workspace.resolve_bookmarks_graph(default_branch).await?;
+    let matcher = bookmark_graph.try_to_matcher()?;
+    let remote_bookmarks = workspace.get_bookmarks_on_remote(&matcher, "origin");
 
-    // TODO: DRY with `fetch_pull_requests` and pass to a rendering layer
+    if bookmark_graph.is_empty() {
+        eprintln!(
+            "No relevant bookmarks found. No changes will be made.\n\
+            hint: Bookmarks are checked from working copy to trunk. Try moving your working copy."
+        );
+        return Ok(());
+    }
+
     // Check PRs for each bookmark
     let client = context.client()?;
-    let futures = bookmark_graph.iter().map(|node| {
-        eprintln!("Checking {}...", node.name);
-        client.retrieve_pull_request(&node.name)
-    });
-    let results = join_all(futures).await;
-    for (node, result) in zip(bookmark_graph, results) {
-        match result {
-            Ok(maybe_pr) => match maybe_pr {
-                Some(pr) => {
-                    println!(
-                        "{}: {}/{}/{}/pull/{}",
-                        node.name,
-                        client.remote.base_url,
-                        client.remote.owner,
-                        client.remote.repository,
-                        pr.number
-                    );
-                }
-                None => {
-                    println!("{}: No PR found", node.name);
-                }
-            },
-            Err(e) => match e {
-                GitHubError::InvalidToken => {
-                    return Err(anyhow::Error::from(e).context(
-                        "Invalid github token. Set GITHUB_TOKEN or log in with the gh CLI.",
-                    ));
-                }
-                _ => {
-                    return Err(anyhow::Error::from(e).context("Failed to fetch PR info"));
-                }
-            },
-        }
-    }
+    let default_branch = context.default_branch().await?;
+    let pull_requests = context
+        .fetch_pull_requests(
+            remote_bookmarks
+                .iter()
+                .filter(|bookmark_name| *bookmark_name != default_branch),
+        )
+        .await?;
+
+    let renderer = Renderer::new();
+    println!(
+        "{}",
+        renderer.display_terminal(
+            &bookmark_graph,
+            &pull_requests,
+            &client.remote,
+            default_branch
+        )
+    );
 
     Ok(())
 }

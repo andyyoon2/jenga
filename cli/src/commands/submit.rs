@@ -15,14 +15,20 @@ pub struct SubmitArgs {
 pub async fn run_submit(args: &SubmitArgs) -> Result<()> {
     let context = CliContext::new();
     let workspace = context.workspace().await?;
+    let default_branch = context.default_branch().await?;
     // TODO: extremely weird, design better pls
-    let bookmark_graph = workspace.resolve_bookmarks_graph().await?;
+    let bookmark_graph = workspace.resolve_bookmarks_graph(default_branch).await?;
     let matcher = bookmark_graph.try_to_matcher()?;
     let remote_bookmarks = workspace.get_bookmarks_on_remote(&matcher, "origin");
     let push_actions = workspace.get_bookmark_push_actions(&matcher, "origin");
 
+    if bookmark_graph.is_empty() {
+        return Err(anyhow!(
+            "No bookmarks found in the revset. Create bookmarks then rerun jenga."
+        ));
+    }
+
     // TODO: Improve parallelism
-    let default_branch = context.default_branch().await?;
     let pull_requests = context
         .fetch_pull_requests(
             remote_bookmarks

@@ -79,8 +79,8 @@ impl WorkspaceContext {
     }
 
     /// Build a dependency graph of local bookmarks
-    pub async fn resolve_bookmarks_graph(&self) -> Result<BookmarkGraph> {
-        let revset = get_valid_bookmarks_revset(&self.workspace, &self.repo)
+    pub async fn resolve_bookmarks_graph(&self, default_branch: &str) -> Result<BookmarkGraph> {
+        let revset = get_valid_bookmarks_revset(&self.workspace, &self.repo, default_branch)
             .context("Failed to get revset")?;
         // Deref the Box (Box<dyn Revset>), then get a ref to it (&dyn Revset)
         build_bookmark_graph_from_revset(&*revset, &self.bookmarks).await
@@ -118,13 +118,11 @@ async fn load_repo(workspace: &Workspace) -> Result<Arc<ReadonlyRepo>> {
 fn get_valid_bookmarks_revset<'repo>(
     workspace: &Workspace,
     repo: &'repo ReadonlyRepo,
+    default_branch: &str,
 ) -> Result<Box<dyn Revset + 'repo>> {
     // See [jj]/cli/src/revset_util.rs L108
     let wc = UserRevsetExpression::working_copy(workspace.workspace_name().to_owned());
-    // TODO: Improve this
-    let trunk = UserRevsetExpression::bookmarks(
-        StringExpression::exact("main").union(StringExpression::exact("master")),
-    );
+    let trunk = UserRevsetExpression::bookmarks(StringExpression::exact(default_branch));
     let bookmarks = UserRevsetExpression::bookmarks(StringExpression::all());
     // TODO: Doing a lot of repeated stuff from jj cli, clean it up
     let expr = wc
@@ -167,6 +165,10 @@ pub struct BookmarkGraph(Vec<Rc<BookmarkNode>>);
 impl BookmarkGraph {
     pub fn iter(&self) -> impl Iterator<Item = &Rc<BookmarkNode>> {
         self.0.iter()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     pub fn try_to_matcher(&self) -> Result<StringMatcher> {
